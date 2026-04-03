@@ -12,7 +12,7 @@ This extension boots a local TSA responder during Behat execution and exposes it
 composer require --dev libresign/behat-tsa-extension
 
 ## Configuration
-
+```yaml
 default:
   extensions:
     LibreSign\Behat\TsaExtension\ServiceContainer\TsaExtension:
@@ -23,7 +23,7 @@ default:
       policy_oid: 1.2.3.4.1
       env_var: LIBRESIGN_TSA_URL
       verbose: false
-
+```
 ## How it works
 
 - On suite start, it creates a temporary local TSA setup (CA, TSA cert, OpenSSL config).
