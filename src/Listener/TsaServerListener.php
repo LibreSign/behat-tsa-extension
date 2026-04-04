@@ -181,12 +181,7 @@ final class TsaServerListener implements EventSubscriberInterface
         ));
 
         $tsaConfig = implode("\n", [
-            'openssl_conf = openssl_init',
-            '',
-            '[openssl_init]',
-            'tsa = tsa_section',
-            '',
-            '[tsa_section]',
+            '[tsa]',
             'default_tsa = tsa_config1',
             '',
             '[tsa_config1]',
@@ -197,13 +192,15 @@ final class TsaServerListener implements EventSubscriberInterface
             'signer_cert = $dir/tsa.crt',
             'certs = $dir/ca.crt',
             'signer_key = $dir/private/tsa.key',
+            'signer_digest = sha256',
             'default_policy = ' . $this->policyOid,
             'other_policies = ' . $this->policyOid,
-            'digests = sha256,sha384,sha512',
+            'digests = sha1,sha256,sha384,sha512',
             'accuracy = secs:1',
             'ordering = yes',
             'tsa_name = yes',
             'ess_cert_id_chain = no',
+            'ess_cert_id_alg = sha256',
             '',
         ]);
         file_put_contents($tsaDir . '/openssl-tsa.cnf', $tsaConfig);
