@@ -12,17 +12,30 @@ This extension boots a local TSA responder during Behat execution and exposes it
 composer require --dev libresign/behat-tsa-extension
 
 ## Configuration
-```yaml
-default:
-  extensions:
-    LibreSign\Behat\TsaExtension\ServiceContainer\TsaExtension:
-      enabled: true
-      host: 127.0.0.1
-      port: 0
-      path: /tsr
-      policy_oid: 1.2.3.4.1
-      env_var: LIBRESIGN_TSA_URL
-      verbose: false
+
+In `behat.php`, use the Behat 4 public configuration API:
+
+```php
+<?php
+
+use Behat\Config\Config;
+use Behat\Config\Extension;
+use Behat\Config\Profile;
+use LibreSign\Behat\TsaExtension\ServiceContainer\TsaExtension;
+
+return (new Config())->withProfile(
+    (new Profile('default'))->withExtension(
+        new Extension(TsaExtension::class, [
+            'enabled' => true,
+            'host' => '127.0.0.1',
+            'port' => 0,
+            'path' => '/tsr',
+            'policy_oid' => '1.2.3.4.1',
+            'env_var' => 'LIBRESIGN_TSA_URL',
+            'verbose' => false,
+        ])
+    )
+);
 ```
 ## How it works
 
@@ -35,7 +48,8 @@ default:
 
 - PHP 8.2+
 - OpenSSL with openssl ts support
-- Behat 3.13+
+- PHP proc_open support and a loopback socket
+- Behat 4.0+
 
 ## License
 

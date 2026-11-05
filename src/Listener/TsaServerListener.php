@@ -11,7 +11,10 @@ use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 
 final class TsaServerListener implements EventSubscriberInterface
 {
-    private string $pid = '0';
+    /** @var resource|null */
+    private $serverProcess = null;
+
+    private ?string $previousEnvValue = null;
 
     private string $workDir = '';
 
@@ -47,62 +50,83 @@ final class TsaServerListener implements EventSubscriberInterface
             return;
         }
 
-        $this->resolvedPort = $this->port > 0 ? $this->port : $this->findOpenPort($this->host);
-        $this->workDir = $this->makeWorkDir();
-        $this->prepareTsaArtifacts();
-        $this->routerPath = $this->writeRouterScript();
-        $this->startServer();
+        $this->previousEnvValue = getenv($this->envVar) === false ? null : getenv($this->envVar);
 
-        $tsaUrl = sprintf('http://%s:%d%s', $this->host, $this->resolvedPort, $this->normalizePath($this->path));
-        putenv(sprintf('%s=%s', $this->envVar, $tsaUrl));
+        try {
+            $this->resolvedPort = $this->port > 0 ? $this->port : $this->findOpenPort($this->host);
+            $this->workDir = $this->makeWorkDir();
+            $this->prepareTsaArtifacts();
+            $this->routerPath = $this->writeRouterScript();
+            $this->startServer();
 
-        if ($this->verbose) {
-            fwrite(STDOUT, sprintf("[tsa-extension] %s=%s\n", $this->envVar, $tsaUrl));
+            $tsaUrl = sprintf('http://%s:%d%s', $this->host, $this->resolvedPort, $this->normalizePath($this->path));
+            putenv(sprintf('%s=%s', $this->envVar, $tsaUrl));
+
+            if ($this->verbose) {
+                fwrite(STDOUT, sprintf("[tsa-extension] %s=%s\n", $this->envVar, $tsaUrl));
+            }
+        } catch (\Throwable $exception) {
+            $this->stop();
+            throw $exception;
         }
     }
 
     public function afterSuite(AfterSuiteTested $event): void
     {
-        $this->stop();
+        if ($this->workDir !== '' || is_resource($this->serverProcess)) {
+            $this->stop();
+        }
     }
 
     private function startServer(): void
     {
-        $cmd = sprintf(
-            'php -S %s:%d -t %s %s > /dev/null 2>&1 & echo $!',
-            escapeshellarg($this->host),
-            $this->resolvedPort,
-            escapeshellarg($this->workDir),
-            escapeshellarg($this->routerPath)
+        $log = $this->workDir . '/server.log';
+        $descriptors = [
+            0 => ['file', '/dev/null', 'r'],
+            1 => ['file', $log, 'a'],
+            2 => ['file', $log, 'a'],
+        ];
+
+        $process = proc_open(
+            [PHP_BINARY, '-S', $this->host . ':' . $this->resolvedPort, '-t', $this->workDir, $this->routerPath],
+            $descriptors,
+            $pipes,
+            $this->workDir
         );
 
-        $this->pid = trim((string) shell_exec($cmd));
-        if ($this->pid === '' || !ctype_digit($this->pid)) {
+        if (!is_resource($process)) {
             throw new RuntimeException('Failed to start local TSA server process.');
         }
 
-        $attempts = 30;
-        while ($attempts > 0) {
+        $this->serverProcess = $process;
+
+        for ($attempt = 0; $attempt < 30; $attempt++) {
             usleep(100000);
-            $socket = @fsockopen($this->host, $this->resolvedPort);
+            if (!$this->isRunning()) {
+                break;
+            }
+
+            $socket = @fsockopen($this->host, $this->resolvedPort, $errno, $errstr, 0.2);
             if (is_resource($socket)) {
                 fclose($socket);
                 return;
             }
-            $attempts--;
         }
 
-        $this->stop();
-        throw new RuntimeException('Local TSA server did not become ready in time.');
+        $details = is_file($log) ? trim((string) file_get_contents($log)) : '';
+        throw new RuntimeException('Local TSA server did not become ready: ' . $details);
     }
 
     private function stop(): void
     {
-        if ($this->isRunning()) {
-            exec('kill ' . $this->pid);
+        if (is_resource($this->serverProcess)) {
+            if ($this->isRunning()) {
+                proc_terminate($this->serverProcess);
+            }
+            proc_close($this->serverProcess);
         }
 
-        $this->pid = '0';
+        $this->serverProcess = null;
 
         if ($this->workDir !== '' && is_dir($this->workDir)) {
             $this->deleteTree($this->workDir);
@@ -110,19 +134,20 @@ final class TsaServerListener implements EventSubscriberInterface
 
         $this->workDir = '';
         $this->routerPath = '';
+        $this->resolvedPort = 0;
 
-        putenv($this->envVar);
+        if ($this->previousEnvValue === null) {
+            putenv($this->envVar);
+        } else {
+            putenv($this->envVar . '=' . $this->previousEnvValue);
+        }
+
+        $this->previousEnvValue = null;
     }
 
     private function isRunning(): bool
     {
-        if ($this->pid === '' || $this->pid === '0') {
-            return false;
-        }
-
-        exec(sprintf('ps %d', (int) $this->pid), $result);
-
-        return count($result) > 1;
+        return is_resource($this->serverProcess) && proc_get_status($this->serverProcess)['running'];
     }
 
     private function makeWorkDir(): string
@@ -352,7 +377,7 @@ PHP;
             }
 
             $path = $dir . '/' . $item;
-            if (is_dir($path)) {
+            if (is_dir($path) && !is_link($path)) {
                 $this->deleteTree($path);
             } else {
                 @unlink($path);
