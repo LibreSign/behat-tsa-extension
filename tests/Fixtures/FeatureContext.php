@@ -14,7 +14,14 @@ final class FeatureContext implements Context
     public function assertTimestampResponse(): void
     {
         $endpoint = getenv('LIBRESIGN_TSA_URL');
-        if (!is_string($endpoint) || !preg_match('~^http://127\\.0\\.0\\.1:([1-9][0-9]*)/tsr$~', $endpoint)) {
+        $expectedPath = getenv('TSA_TEST_PATH') ?: '/tsr';
+        $url = is_string($endpoint) ? parse_url($endpoint) : false;
+        if (!is_array($url)
+            || ($url['scheme'] ?? '') !== 'http'
+            || ($url['host'] ?? '') !== '127.0.0.1'
+            || ($url['port'] ?? 0) <= 0
+            || ($url['path'] ?? '') !== $expectedPath
+        ) {
             throw new RuntimeException('Dynamic TSA endpoint was not published: ' . var_export($endpoint, true));
         }
 

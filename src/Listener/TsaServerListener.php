@@ -52,6 +52,7 @@ final class TsaServerListener implements EventSubscriberInterface
 
         $this->previousEnvValue = getenv($this->envVar) === false ? null : getenv($this->envVar);
 
+        $started = false;
         try {
             $this->resolvedPort = $this->port > 0 ? $this->port : $this->findOpenPort($this->host);
             $this->workDir = $this->makeWorkDir();
@@ -65,9 +66,12 @@ final class TsaServerListener implements EventSubscriberInterface
             if ($this->verbose) {
                 fwrite(STDOUT, sprintf("[tsa-extension] %s=%s\n", $this->envVar, $tsaUrl));
             }
-        } catch (\Throwable $exception) {
-            $this->stop();
-            throw $exception;
+
+            $started = true;
+        } finally {
+            if (!$started) {
+                $this->stop();
+            }
         }
     }
 
@@ -106,15 +110,42 @@ final class TsaServerListener implements EventSubscriberInterface
                 break;
             }
 
-            $socket = @fsockopen($this->host, $this->resolvedPort, $errno, $errstr, 0.2);
-            if (is_resource($socket)) {
-                fclose($socket);
+            // A listening socket alone does not prove that our TSA router is ready.
+            if ($this->isRouterReady()) {
                 return;
             }
         }
 
         $details = is_file($log) ? trim((string) file_get_contents($log)) : '';
         throw new RuntimeException('Local TSA server did not become ready: ' . $details);
+    }
+
+    private function isRouterReady(): bool
+    {
+        $socket = @fsockopen($this->host, $this->resolvedPort, $errno, $error, 0.2);
+        if (!is_resource($socket)) {
+            return false;
+        }
+
+        try {
+            stream_set_timeout($socket, 0, 200000);
+            $request = sprintf(
+                "POST %s HTTP/1.0\r\nHost: %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                $this->normalizePath($this->path),
+                $this->host
+            );
+            if (fwrite($socket, $request) !== strlen($request)) {
+                return false;
+            }
+
+            $response = stream_get_contents($socket);
+
+            return is_string($response)
+                && preg_match('~^HTTP/1\.[01] 400\b~', $response) === 1
+                && str_ends_with($response, 'empty timestamp query');
+        } finally {
+            fclose($socket);
+        }
     }
 
     private function stop(): void
@@ -237,7 +268,7 @@ final class TsaServerListener implements EventSubscriberInterface
         $path = $this->normalizePath($this->path);
         $script = <<<'PHP'
 <?php
-$targetPath = '__TSA_PATH__';
+$targetPath = __TSA_PATH__;
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) !== $targetPath) {
     http_response_code(404);
     header('Content-Type: text/plain');
@@ -267,7 +298,7 @@ file_put_contents($queryFile, $input);
 $command = sprintf(
     'openssl ts -reply -queryfile %s -config %s -out %s 2>&1',
     escapeshellarg($queryFile),
-    escapeshellarg('__TSA_CONFIG__'),
+    escapeshellarg(__TSA_CONFIG__),
     escapeshellarg($replyFile)
 );
 
@@ -301,7 +332,7 @@ PHP;
 
         $script = str_replace(
             ['__TSA_PATH__', '__TSA_CONFIG__'],
-            [$path, $this->workDir . '/tsa/openssl-tsa.cnf'],
+            [var_export($path, true), var_export($this->workDir . '/tsa/openssl-tsa.cnf', true)],
             $script
         );
 

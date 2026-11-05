@@ -16,6 +16,7 @@ return (new Config())->withProfile(
             'host' => getenv('TSA_TEST_HOST') ?: '127.0.0.1',
             'port' => (int) (getenv('TSA_TEST_PORT') ?: 0),
             'env_var' => 'LIBRESIGN_TSA_URL',
+            'path' => getenv('TSA_TEST_PATH') ?: '/tsr',
             'verbose' => true,
         ]))
 );

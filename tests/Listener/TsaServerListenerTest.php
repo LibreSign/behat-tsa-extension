@@ -55,6 +55,33 @@ final class TsaServerListenerTest extends TestCase
         self::assertStringContainsString('digests = sha1,sha256,sha384,sha512', $config);
     }
 
+    public function testSuiteLifecycleRestoresExistingEnvironmentVariable(): void
+    {
+        $envVar = 'LIBRESIGN_TSA_RESTORE_TEST';
+        $previous = getenv($envVar);
+        $expected = 'http://original.example/tsa';
+        putenv($envVar . '=' . $expected);
+
+        $listener = new TsaServerListener(true, '127.0.0.1', 0, '/tsr', '1.2.3.4.1', $envVar, false);
+        $before = (new ReflectionClass(BeforeSuiteTested::class))->newInstanceWithoutConstructor();
+        $after = (new ReflectionClass(AfterSuiteTested::class))->newInstanceWithoutConstructor();
+
+        try {
+            $listener->beforeSuite($before);
+            self::assertStringStartsWith('http://127.0.0.1:', (string) getenv($envVar));
+
+            $listener->afterSuite($after);
+            self::assertSame($expected, getenv($envVar));
+        } finally {
+            $listener->afterSuite($after);
+            if ($previous === false) {
+                putenv($envVar);
+            } else {
+                putenv($envVar . '=' . $previous);
+            }
+        }
+    }
+
     private function deleteTree(string $path): void
     {
         if (is_file($path) || is_link($path)) {
